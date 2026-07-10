@@ -1,0 +1,42 @@
+# 📄 Local PDF Chatbot
+
+An AI-powered chatbot that lets users chat with PDF documents.
+
+## 🚀 Features
+
+- Upload any PDF
+- Ask questions about the document
+- Local AI processing using Ollama
+- No API cost
+- Private document processing
+
+## 🛠️ Tech Stack
+
+- Python
+- Streamlit
+- LangChain
+- Ollama
+- Llama 3.1
+- Nomic Embeddings
+
+## Architecture
+
+PDF  
+↓  
+Document Chunking  
+↓  
+Embeddings  
+↓  
+Vector Search  
+↓  
+Local LLM  
+↓  
+Answer
+
+## Run Locally
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+
