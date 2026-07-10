@@ -1,3 +1,4 @@
+
 import os
 import tempfile
 
@@ -5,30 +6,42 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.vectorstores import InMemoryVectorStore
-from langchain_ollama import OllamaEmbeddings
+from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
-# Load environment variables
+# --------------------------------------------------
+# Environment
+# --------------------------------------------------
+
 load_dotenv()
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+if not GROQ_API_KEY:
+    try:
+        GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+    except Exception:
+        st.error("Missing GROQ_API_KEY. Add it in .env or Streamlit Secrets.")
+        st.stop()
 
 
 # --------------------------------------------------
-# Streamlit Configuration
+# Streamlit Config
 # --------------------------------------------------
 
 st.set_page_config(
     page_title="DocuMind AI",
     page_icon="📄",
-    layout="wide",
+    layout="wide"
 )
 
 
 st.title("📄 DocuMind AI")
-st.subheader(
-    "Your intelligent PDF assistant — ask questions, extract insights, and chat with your documents."
+st.caption(
+    "AI-powered PDF assistant using LangChain + Groq + RAG"
 )
 
 
@@ -38,28 +51,21 @@ st.subheader(
 
 with st.sidebar:
 
-    st.title("⚙️ Settings")
+    st.header("⚙️ Settings")
 
-    st.markdown("### Language Model")
-    st.success("Groq - Llama 3.1 8B")
+    st.success("LLM: Groq Llama 3.1 8B")
 
-    st.markdown("### Embedding Model")
-    st.success("Ollama - nomic-embed-text")
+    st.success(
+        "Embeddings: HuggingFace MiniLM"
+    )
 
     st.divider()
 
     if st.button("🗑 Clear Chat"):
 
         st.session_state.messages = []
+
         st.rerun()
-
-
-    st.divider()
-
-    st.caption(
-        "Built with LangChain + Groq + Ollama Embeddings + Streamlit"
-    )
-
 
 
 # --------------------------------------------------
@@ -70,44 +76,36 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 
 
-if "vector_db" not in st.session_state:
-    st.session_state.vector_db = None
+if "vector_store" not in st.session_state:
+    st.session_state.vector_store = None
 
 
-if "document_uploaded" not in st.session_state:
-    st.session_state.document_uploaded = False
+if "uploaded" not in st.session_state:
+    st.session_state.uploaded = False
 
 
 
 # --------------------------------------------------
-# Load Groq Model
+# Load Models
 # --------------------------------------------------
 
 @st.cache_resource
 def load_llm():
 
     return ChatGroq(
-
+        api_key=GROQ_API_KEY,
         model="llama-3.1-8b-instant",
-
         temperature=0,
-
-        max_tokens=250,
+        max_tokens=500
     )
 
-
-
-# --------------------------------------------------
-# Load Embeddings
-# --------------------------------------------------
 
 @st.cache_resource
 def load_embeddings():
 
-    return OllamaEmbeddings(
-        model="nomic-embed-text"
+    return HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
     )
-
 
 
 llm = load_llm()
@@ -117,10 +115,20 @@ embeddings = load_embeddings()
 
 
 # --------------------------------------------------
-# Process PDF
+# PDF Processing
 # --------------------------------------------------
 
-def process_document(file_path):
+def create_vector_store(pdf_file):
+
+    with tempfile.NamedTemporaryFile(
+        delete=False,
+        suffix=".pdf"
+    ) as temp:
+
+        temp.write(pdf_file.read())
+
+        file_path = temp.name
+
 
     loader = PyPDFLoader(file_path)
 
@@ -128,30 +136,26 @@ def process_document(file_path):
 
 
     splitter = RecursiveCharacterTextSplitter(
-
         chunk_size=1000,
-
         chunk_overlap=200
-
     )
 
 
-    chunks = splitter.split_documents(documents)
-
-
-
-    vector_db = InMemoryVectorStore.from_documents(
-
-        documents=chunks,
-
-        embedding=embeddings
-
+    chunks = splitter.split_documents(
+        documents
     )
 
 
-    st.session_state.vector_db = vector_db
+    vector_store = FAISS.from_documents(
+        chunks,
+        embeddings
+    )
 
-    st.session_state.document_uploaded = True
+
+    os.remove(file_path)
+
+
+    return vector_store
 
 
 
@@ -159,71 +163,54 @@ def process_document(file_path):
 # Upload PDF
 # --------------------------------------------------
 
-if not st.session_state.document_uploaded:
+if not st.session_state.uploaded:
 
 
     uploaded_file = st.file_uploader(
-
-        "📂 Upload your PDF document",
-
+        "📂 Upload PDF",
         type=["pdf"]
-
     )
 
 
     if uploaded_file:
 
 
-        with tempfile.NamedTemporaryFile(
-
-            delete=False,
-
-            suffix=".pdf"
-
-        ) as temp:
-
-
-            temp.write(uploaded_file.read())
-
-            pdf_path = temp.name
-
-
-
         with st.spinner(
-            "Reading and understanding your document..."
+            "Processing document..."
         ):
 
-            process_document(pdf_path)
+            st.session_state.vector_store = (
+                create_vector_store(uploaded_file)
+            )
 
 
-
-        os.remove(pdf_path)
-
+            st.session_state.uploaded = True
 
 
         st.success(
-            "✅ Document processed successfully!"
+            "✅ PDF ready!"
         )
-
 
         st.rerun()
 
 
 
 # --------------------------------------------------
-# Chat
+# Chat Interface
 # --------------------------------------------------
 
-if st.session_state.document_uploaded:
+if st.session_state.uploaded:
 
 
     for message in st.session_state.messages:
 
+        with st.chat_message(
+            message["role"]
+        ):
 
-        with st.chat_message(message["role"]):
-
-            st.markdown(message["content"])
-
+            st.markdown(
+                message["content"]
+            )
 
 
     query = st.chat_input(
@@ -231,21 +218,15 @@ if st.session_state.document_uploaded:
     )
 
 
-
     if query:
 
 
         st.session_state.messages.append(
-
             {
                 "role": "user",
-
                 "content": query
-
             }
-
         )
-
 
 
         with st.chat_message("user"):
@@ -255,63 +236,57 @@ if st.session_state.document_uploaded:
 
 
         with st.spinner(
-            "Searching your document..."
+            "Searching document..."
         ):
 
-
-            docs = st.session_state.vector_db.similarity_search(
-
-                query,
-
-                k=4
-
+            results = (
+                st.session_state.vector_store
+                .similarity_search(
+                    query,
+                    k=5
+                )
             )
 
 
-
         context = "\n\n".join(
+            [
+                f"""
+Page {doc.metadata.get('page',0)+1}:
 
-            doc.page_content
-
-            for doc in docs
-
+{doc.page_content}
+"""
+                for doc in results
+            ]
         )
-
 
 
         prompt = f"""
 
-You are DocuMind AI, a helpful PDF assistant.
+You are DocuMind AI.
 
-Conversation style:
-- Friendly and natural.
-- Talk like a human assistant.
-- Keep responses clear and simple.
-- Do not sound robotic.
+Answer the user only using the PDF content.
 
 Rules:
-1. Answer only from the provided document.
-2. If information is missing, say:
+- Do not invent information.
+- If the answer is unavailable say:
 "I couldn't find that information in the uploaded PDF."
-3. Never invent facts.
-4. Use bullet points when useful.
-5. Give short explanations first, then details if needed.
+- Keep answers clear.
+- Mention page numbers when possible.
 
 
-Document:
+PDF CONTENT:
 
 {context}
 
 
-User question:
+QUESTION:
 
 {query}
 
 
-Answer:
+ANSWER:
 
 """
-
 
 
         with st.chat_message("assistant"):
@@ -321,12 +296,11 @@ Answer:
                 "Thinking..."
             ):
 
+                response = llm.invoke(
+                    prompt
+                )
 
-                result = llm.invoke(prompt)
-
-
-                answer = result.content
-
+                answer = response.content
 
 
             st.markdown(answer)
@@ -334,12 +308,9 @@ Answer:
 
 
         st.session_state.messages.append(
-
             {
                 "role": "assistant",
-
                 "content": answer
-
             }
-
         )
+
